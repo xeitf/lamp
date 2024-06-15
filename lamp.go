@@ -60,23 +60,37 @@ func Init(cfg string) (close func() error, err error) {
 	return
 }
 
-type ExposeOptions struct {
+type exposeOptions struct {
 	Addrs map[string]string
 	TTL   int64
 }
 
-type ExposeOption func(opts *ExposeOptions)
+type fnExposeOption struct {
+	f func(*exposeOptions)
+}
+
+// newFnExposeOption
+func newFnExposeOption(f func(*exposeOptions)) *fnExposeOption {
+	return &fnExposeOption{f: f}
+}
+
+// apply
+func (expOpt *fnExposeOption) apply(opts *exposeOptions) {
+	expOpt.f(opts)
+}
+
+type ExposeOption interface {
+	apply(opts *exposeOptions)
+}
 
 // WithTTL
 func WithTTL(ttl int64) ExposeOption {
-	return func(opts *ExposeOptions) {
-		opts.TTL = ttl
-	}
+	return newFnExposeOption(func(opts *exposeOptions) { opts.TTL = ttl })
 }
 
 // WithPublic
 func WithPublic(addr string, protocol ...string) ExposeOption {
-	return func(opts *ExposeOptions) {
+	return newFnExposeOption(func(opts *exposeOptions) {
 		host, port, err := net.SplitHostPort(addr)
 		if err != nil {
 			return
@@ -91,7 +105,7 @@ func WithPublic(addr string, protocol ...string) ExposeOption {
 			protocol = []string{"any"}
 		}
 		opts.Addrs[protocol[0]] = host + ":" + port
-	}
+	})
 }
 
 // Expose
@@ -103,12 +117,12 @@ func Expose(serviceName string, opts ...ExposeOption) (cancel func() error, err 
 func ExposeWithContext(ctx context.Context, serviceName string, opts ...ExposeOption) (cancel func() error, err error) {
 	panicIfNotInited()
 
-	expOpts := ExposeOptions{
+	expOpts := exposeOptions{
 		Addrs: make(map[string]string),
 	}
 	// Apply options
-	for _, setOption := range opts {
-		setOption(&expOpts)
+	for _, opt := range opts {
+		opt.apply(&expOpts)
 	}
 
 	// Option: TTL
