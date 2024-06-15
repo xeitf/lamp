@@ -25,12 +25,15 @@ type etcdClient struct {
 
 var (
 	ErrInvalidEndpoint = errors.New("invalid endpoint")
-	ErrAddressNotFound = errors.New("address not found")
+	ErrInvalidKey      = errors.New("invalid key")
+	ErrInvalidAddress  = errors.New("invalid address")
 	ErrRegisterFailed  = errors.New("register failed")
 )
 
 // newEtcd
-func newEtcd(cfg etcdConfig) (c *etcdClient, err error) {
+func newEtcd(ctx context.Context, cfg etcdConfig) (c *etcdClient, err error) {
+	cfg.Context = ctx
+
 	cli, err := client.New(cfg.Config)
 	if err != nil {
 		return nil, err
@@ -40,14 +43,14 @@ func newEtcd(cfg etcdConfig) (c *etcdClient, err error) {
 }
 
 // newEtcdWithURL
-func newEtcdWithURL(u *url.URL) (c *etcdClient, err error) {
+func newEtcdWithURL(ctx context.Context, URL *url.URL) (c *etcdClient, err error) {
 	var cfg etcdConfig
 
 	// Option: Endpoints
-	if u.Host == "" {
+	if URL.Host == "" {
 		return nil, ErrInvalidEndpoint
 	}
-	for _, endpoint := range strings.Split(u.Host, ",") {
+	for _, endpoint := range strings.Split(URL.Host, ",") {
 		if _, _, err = net.SplitHostPort(endpoint); err != nil {
 			return nil, err
 		}
@@ -55,22 +58,17 @@ func newEtcdWithURL(u *url.URL) (c *etcdClient, err error) {
 	}
 
 	// Option: Namespace
-	if u.Path != "" && u.Path != "/" {
-		cfg.Namespace = u.Path
+	if URL.Path != "" && URL.Path != "/" {
+		cfg.Namespace = URL.Path
 	}
 
-	return newEtcd(cfg)
+	return newEtcd(ctx, cfg)
 }
 
-// Close shuts down the client's etcd connections.
-func (c *etcdClient) Close() error {
-	return c.cli.Close()
-}
-
-// Register
-func (c *etcdClient) Register(ctx context.Context, serviceName string, addrs map[string]string, ttl int64) (cancel func() error, err error) {
+// Expose
+func (c *etcdClient) Expose(ctx context.Context, serviceName string, addrs map[string]string, ttl int64) (cancel func() error, err error) {
 	if len(addrs) <= 0 {
-		return nil, ErrAddressNotFound
+		return nil, ErrInvalidAddress
 	}
 
 	leaseResp, err := c.cli.Grant(ctx, int64(ttl))
@@ -78,7 +76,7 @@ func (c *etcdClient) Register(ctx context.Context, serviceName string, addrs map
 		return nil, err
 	}
 
-	leaseKeepAliveRespChan, err := c.cli.KeepAlive(ctx, leaseResp.ID)
+	keepAliveChan, err := c.cli.KeepAlive(ctx, leaseResp.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +92,7 @@ func (c *etcdClient) Register(ctx context.Context, serviceName string, addrs map
 	var wg sync.WaitGroup
 	var now = time.Now()
 	var ops = make([]client.Op, 0, len(addrs))
-	var servicePrefix = c.cfg.Namespace + "/" + serviceName
+	var servicePrefix = c.servicePrefix(serviceName)
 
 	wg.Add(1)
 	go func() {
@@ -102,8 +100,8 @@ func (c *etcdClient) Register(ctx context.Context, serviceName string, addrs map
 		defer cancel()
 		for {
 			select {
-			// KeepAlive response
-			case _, ok := <-leaseKeepAliveRespChan:
+			// KeepAlive channel
+			case _, ok := <-keepAliveChan:
 				if !ok {
 					return
 				}
@@ -148,47 +146,37 @@ func (c *etcdClient) Register(ctx context.Context, serviceName string, addrs map
 	return
 }
 
+// Discover
 func (c *etcdClient) Discover(ctx context.Context, serviceName string, protocol string) (addrs []string, err error) {
-	servicePrefix := c.cfg.Namespace + "/" + serviceName
+	servicePrefix := c.servicePrefix(serviceName)
 
 	getResp, err := c.cli.Get(ctx, servicePrefix, client.WithPrefix())
 	if err != nil {
 		return nil, err
 	}
 
-	protocolAddrs := make(map[string][]string)
+	serviceAddrs := make(map[string]map[string]Node)
 
 	for _, kv := range getResp.Kvs {
-		protocolAndNodeID := strings.Split(
-			strings.TrimPrefix(string(kv.Key), servicePrefix+"/"), "/")
-		if len(protocolAndNodeID) != 2 {
+		p, id, node, err := c.isValidNode(servicePrefix, string(kv.Key), kv.Value)
+		if err != nil {
 			continue
 		}
-		var node Node
-		var prot = protocolAndNodeID[0]
-		if err := json.Unmarshal(kv.Value, &node); err != nil {
-			continue
-		}
-		if _, ok := protocolAddrs[prot]; !ok {
-			protocolAddrs[prot] = []string{node.Addr}
+		if _, ok := serviceAddrs[p]; !ok {
+			serviceAddrs[p] = map[string]Node{id: node}
 		} else {
-			protocolAddrs[prot] = append(protocolAddrs[prot], node.Addr)
+			serviceAddrs[p][id] = node
 		}
 	}
 
-	if addrs, ok := protocolAddrs[protocol]; ok {
-		return addrs, nil
-	} else if addrs, ok := protocolAddrs["any"]; ok {
-		return addrs, nil
-	}
-
-	return nil, nil
+	return c.selectAddrs(serviceAddrs, protocol), nil
 }
 
+// Watch
 func (c *etcdClient) Watch(ctx context.Context, serviceName string, protocol string, notify func(addrs []string, closed bool)) (close func(), err error) {
 	var wg sync.WaitGroup
-	var serviceAddrs = make(map[string]Node)
-	var servicePrefix = c.cfg.Namespace + "/" + serviceName
+	var serviceAddrs = make(map[string]map[string]Node)
+	var servicePrefix = c.servicePrefix(serviceName)
 
 	getResp, err := c.cli.Get(ctx, servicePrefix, client.WithPrefix())
 	if err != nil {
@@ -196,15 +184,16 @@ func (c *etcdClient) Watch(ctx context.Context, serviceName string, protocol str
 	}
 
 	for _, kv := range getResp.Kvs {
-		protocolAndNodeID := strings.TrimPrefix(string(kv.Key), servicePrefix+"/")
-		var node Node
-		if err := json.Unmarshal(kv.Value, &node); err != nil {
+		p, id, node, err := c.isValidNode(servicePrefix, string(kv.Key), kv.Value)
+		if err != nil {
 			continue
 		}
-		serviceAddrs[protocolAndNodeID] = node
+		if _, ok := serviceAddrs[p]; !ok {
+			serviceAddrs[p] = map[string]Node{id: node}
+		} else {
+			serviceAddrs[p][id] = node
+		}
 	}
-
-	notify(c.selectServiceAddrs(serviceAddrs, protocol), false)
 
 	ctx, close = context.WithCancel(ctx)
 	watchChan := c.cli.Watch(ctx, servicePrefix, client.WithPrefix())
@@ -212,32 +201,7 @@ func (c *etcdClient) Watch(ctx context.Context, serviceName string, protocol str
 	wg.Add(1)
 	go func() {
 		wg.Done()
-		defer notify(nil, true)
-		for {
-			select {
-			case watchResp, ok := <-watchChan:
-				if !ok {
-					return
-				}
-				for _, event := range watchResp.Events {
-					var node Node
-					if err := json.Unmarshal(event.Kv.Value, &node); err != nil {
-						continue
-					}
-					var protocolAndNodeID = strings.TrimPrefix(string(event.Kv.Key), servicePrefix+"/")
-
-					switch event.Type {
-					case client.EventTypePut:
-						serviceAddrs[protocolAndNodeID] = node
-					case client.EventTypeDelete:
-						delete(serviceAddrs, protocolAndNodeID)
-					}
-				}
-
-				notify(c.selectServiceAddrs(serviceAddrs, protocol), false)
-			}
-		}
-
+		c.watch(ctx, servicePrefix, protocol, notify, serviceAddrs, watchChan)
 	}()
 
 	wg.Wait()
@@ -245,29 +209,103 @@ func (c *etcdClient) Watch(ctx context.Context, serviceName string, protocol str
 	return
 }
 
-func (c *etcdClient) selectServiceAddrs(serviceAddrs map[string]Node, protocol string) (addrs []string) {
-	protocols := make(map[string][]string)
-	for protocolAndNodeID, node := range serviceAddrs {
-		if protocol != "any" &&
-			strings.HasPrefix(protocolAndNodeID, protocol+"/") {
-			if _, ok := protocols[protocol]; !ok {
-				protocols[protocol] = []string{node.Addr}
-			} else {
-				protocols[protocol] = append(protocols[protocol], node.Addr)
-			}
+// watch
+func (c *etcdClient) watch(ctx context.Context, servicePrefix, protocol string, notify func(addrs []string, closed bool),
+	serviceAddrs map[string]map[string]Node, watchChan client.WatchChan) {
+	defer notify(nil, true)
+
+	// send the first notification
+	notify(c.selectAddrs(serviceAddrs, protocol), false)
+
+	put := func(key string, value []byte) {
+		p, id, node, err := c.isValidNode(servicePrefix, key, value)
+		if err != nil {
+			return
 		}
-		if strings.HasPrefix(protocolAndNodeID, "any/") {
-			if _, ok := protocols["any"]; !ok {
-				protocols["any"] = []string{node.Addr}
-			} else {
-				protocols["any"] = append(protocols[protocol], node.Addr)
+		if _, ok := serviceAddrs[p]; !ok {
+			serviceAddrs[p] = map[string]Node{id: node}
+		} else {
+			serviceAddrs[p][id] = node
+		}
+	}
+
+	rem := func(key string, value []byte) {
+		p, id, _, err := c.isValidNode(servicePrefix, key, value)
+		if err != nil {
+			return
+		}
+		if _, ok := serviceAddrs[p]; ok {
+			delete(serviceAddrs[p], id)
+			if len(serviceAddrs[p]) <= 0 {
+				delete(serviceAddrs, p)
 			}
 		}
 	}
-	if addrs, ok := protocols[protocol]; ok {
-		return addrs
-	} else if addrs, ok := protocols["any"]; ok {
-		return addrs
+
+	for {
+		select {
+		// Watch channel
+		case watchResp, ok := <-watchChan:
+			if !ok {
+				return
+			}
+			for _, event := range watchResp.Events {
+				switch event.Type {
+				case client.EventTypePut:
+					put(string(event.Kv.Key), event.Kv.Value)
+				case client.EventTypeDelete:
+					rem(string(event.Kv.Key), event.Kv.Value)
+				}
+			}
+			// notify
+			notify(c.selectAddrs(serviceAddrs, protocol), false)
+		// Cancel
+		case <-ctx.Done():
+			return
+		}
 	}
-	return nil
+}
+
+// isValidNode
+func (c *etcdClient) isValidNode(servicePrefix, key string, value []byte) (protocol string, nodeID string, node Node, err error) {
+	protocol, nodeID, ok := c.splitProtocolAndNodeID(key, servicePrefix)
+	if !ok {
+		return "", "", Node{}, ErrInvalidKey
+	}
+	if err = json.Unmarshal(value, &node); err != nil {
+		return "", "", Node{}, err
+	}
+	return
+}
+
+// splitProtocolAndNodeID
+func (c *etcdClient) splitProtocolAndNodeID(key, servicePrefix string) (protocol string, nodeID string, ok bool) {
+	pn := strings.TrimPrefix(key, servicePrefix+"/")
+	if i := strings.Index(pn, "/"); i == -1 {
+		return "", "", false
+	} else {
+		return pn[0:i], pn[i+1:], true
+	}
+}
+
+func (c *etcdClient) selectAddrs(serviceAddrs map[string]map[string]Node, protocol string) (addrs []string) {
+	if _, ok := serviceAddrs[protocol]; !ok {
+		protocol = "any"
+	}
+	if protocolAddrs, ok := serviceAddrs[protocol]; ok {
+		for _, addr := range protocolAddrs {
+			addrs = append(addrs, addr.Addr)
+		}
+	}
+	return
+}
+
+// servicePrefix
+func (c *etcdClient) servicePrefix(serviceName string) string {
+	return c.cfg.Namespace + "/" + serviceName
+}
+
+// Close shuts down the client's etcd connections.
+func (c *etcdClient) Close() error {
+	return c.cli.Close()
 }

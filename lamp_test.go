@@ -2,6 +2,7 @@ package lamp_test
 
 import (
 	"fmt"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -10,34 +11,40 @@ import (
 )
 
 func TestXxx(t *testing.T) {
+	os.Setenv("PUBLIC_HOSTNAME", "127.0.0.1")
+
 	close, err := lamp.Init("etcd://127.0.0.1:2379/services")
 	if err != nil {
+		t.Errorf("lamp.Init: %s", err.Error())
 		return
 	}
 	defer close()
 
-	cancel, err := lamp.Register("user-svr",
+	cancel, err := lamp.Expose("user-svr",
 		lamp.WithTTL(5),
-		lamp.WithPublic("127.0.0.1:8999"),
-		lamp.WithPublic("127.0.0.1:80", "http"),
+		lamp.WithPublic(":8999"),
+		lamp.WithPublic(":80", "http"),
 	)
 	if err != nil {
+		t.Errorf("lamp.Expose: %s", err.Error())
 		return
 	}
 	defer cancel()
 
-	cancel2, err := lamp.Register("user-svr",
-		lamp.WithPublic("127.0.0.1:8990"),
+	cancel2, err := lamp.Expose("user-svr",
+		lamp.WithPublic(":8990"),
 	)
 	if err != nil {
+		t.Errorf("lamp.Expose: %s", err.Error())
 		return
 	}
 	defer cancel2()
 
-	closeWatch, err := lamp.Watch("user-svr", "http", func(addrs []string, closed bool) {
+	closeWatch, err := lamp.Watch("user-svr", "grpc", func(addrs []string, closed bool) {
 		fmt.Printf("Watch: %+v %+v\n", addrs, closed)
 	})
 	if err != nil {
+		t.Errorf("lamp.Watch: %s", err.Error())
 		return
 	}
 	defer closeWatch()

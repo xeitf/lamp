@@ -3,87 +3,125 @@ package lamp
 import (
 	"context"
 	"errors"
+	"net"
 	"net/url"
+	"os"
 )
 
 var (
+	ErrNotInitialized         = errors.New("not initialized")
 	ErrMiddlewareNotSupported = errors.New("middleware not supported")
+	ErrAddressNotFound        = errors.New("address not found")
 )
 
 type Client interface {
-	Register(ctx context.Context, serviceName string, addrs map[string]string, ttl int64) (cancel func() error, err error)
+	Expose(ctx context.Context, serviceName string, addrs map[string]string, ttl int64) (cancel func() error, err error)
 	Discover(ctx context.Context, serviceName string, protocol string) (addrs []string, err error)
 	Watch(ctx context.Context, serviceName string, protocol string, notify func(addrs []string, closed bool)) (close func(), err error)
 	Close() error
 }
 
-var cli Client
+var (
+	cli Client
+)
 
 // Init
 // e. etcd://127.0.0.1:2379/services?
 func Init(cfg string) (close func() error, err error) {
-	var u *url.URL
+	var URL *url.URL
 
-	if u, err = url.Parse(cfg); err != nil {
+	if URL, err = url.Parse(cfg); err != nil {
 		panic(err)
 	}
 
-	if u.Scheme != "etcd" {
-		return nil, ErrMiddlewareNotSupported
+	ctx, cancel := context.WithCancel(context.Background())
+
+	switch URL.Scheme {
+	// Use etcd
+	case "etcd":
+		cli, err = newEtcdWithURL(ctx, URL)
+	// Not supported
+	default:
+		cli, err = nil, ErrMiddlewareNotSupported
 	}
 
-	cli, err = newEtcdWithURL(u)
-	if err == nil {
-		close = func() error { return cli.Close() }
+	if err != nil {
+		cancel()
+	} else {
+		close = func() (err error) {
+			cancel()
+			if err = cli.Close(); err == nil {
+				cli = nil
+			}
+			return
+		}
 	}
+
 	return
 }
 
-type RegisterOptions struct {
+type ExposeOptions struct {
 	Addrs map[string]string
 	TTL   int64
 }
 
-type RegisterOption func(opts *RegisterOptions)
+type ExposeOption func(opts *ExposeOptions)
 
 // WithTTL
-func WithTTL(ttl int64) RegisterOption {
-	return func(opts *RegisterOptions) {
+func WithTTL(ttl int64) ExposeOption {
+	return func(opts *ExposeOptions) {
 		opts.TTL = ttl
 	}
 }
 
 // WithPublic
-func WithPublic(addr string, protocol ...string) RegisterOption {
-	return func(opts *RegisterOptions) {
+func WithPublic(addr string, protocol ...string) ExposeOption {
+	return func(opts *ExposeOptions) {
+		host, port, err := net.SplitHostPort(addr)
+		if err != nil {
+			return
+		}
+		if host == "" {
+			host = os.Getenv("PUBLIC_HOSTNAME")
+		}
+		if host == "" || port == "" {
+			return
+		}
 		if len(protocol) != 1 {
 			protocol = []string{"any"}
 		}
-		opts.Addrs[protocol[0]] = addr
+		opts.Addrs[protocol[0]] = host + ":" + port
 	}
 }
 
-// Register
-func Register(serviceName string, opts ...RegisterOption) (cancel func() error, err error) {
-	return RegisterWithContext(context.Background(), serviceName, opts...)
+// Expose
+func Expose(serviceName string, opts ...ExposeOption) (cancel func() error, err error) {
+	return ExposeWithContext(context.Background(), serviceName, opts...)
 }
 
-// RegisterWithContext
-func RegisterWithContext(ctx context.Context, serviceName string, opts ...RegisterOption) (cancel func() error, err error) {
-	regOpts := RegisterOptions{
+// ExposeWithContext
+func ExposeWithContext(ctx context.Context, serviceName string, opts ...ExposeOption) (cancel func() error, err error) {
+	panicIfNotInited()
+
+	expOpts := ExposeOptions{
 		Addrs: make(map[string]string),
 	}
 	// Apply options
 	for _, setOption := range opts {
-		setOption(&regOpts)
+		setOption(&expOpts)
 	}
 
 	// Option: TTL
-	if regOpts.TTL <= 0 {
-		regOpts.TTL = 30
+	if expOpts.TTL <= 0 {
+		expOpts.TTL = 30
 	}
 
-	return cli.Register(ctx, serviceName, regOpts.Addrs, regOpts.TTL)
+	// Option: Addrs
+	if len(expOpts.Addrs) <= 0 {
+		return nil, ErrAddressNotFound
+	}
+
+	return cli.Expose(ctx, serviceName, expOpts.Addrs, expOpts.TTL)
 }
 
 // Discover
@@ -93,6 +131,7 @@ func Discover(serviceName string, protocol string) (addrs []string, err error) {
 
 // DiscoverWithContext
 func DiscoverWithContext(ctx context.Context, serviceName string, protocol string) (addrs []string, err error) {
+	panicIfNotInited()
 	return cli.Discover(ctx, serviceName, protocol)
 }
 
@@ -103,5 +142,13 @@ func Watch(serviceName string, protocol string, notify func(addrs []string, clos
 
 // WatchWithContext
 func WatchWithContext(ctx context.Context, serviceName string, protocol string, notify func(addrs []string, closed bool)) (close func(), err error) {
+	panicIfNotInited()
 	return cli.Watch(ctx, serviceName, protocol, notify)
+}
+
+// panicIfNotInited
+func panicIfNotInited() {
+	if cli == nil {
+		panic(ErrNotInitialized)
+	}
 }
