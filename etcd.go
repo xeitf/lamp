@@ -126,7 +126,7 @@ func (c *etcdClient) Expose(ctx context.Context, serviceName string, addrs map[s
 		}
 		ops = append(ops,
 			client.OpPut(
-				servicePrefix+"/"+protocol+"/"+addr,
+				servicePrefix+"/"+protocol+"/"+generateNodeID(addr),
 				string(info),
 				client.WithLease(leaseResp.ID),
 			))
