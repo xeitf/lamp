@@ -84,7 +84,7 @@ func (c *etcdClient) Expose(ctx context.Context, serviceName string, addrs map[s
 	ctx, cancelCtx := context.WithCancel(ctx)
 
 	cancel = func() (err error) {
-		cancelCtx()
+		defer cancelCtx()
 		_, err = c.cli.Revoke(ctx, leaseResp.ID)
 		return
 	}
