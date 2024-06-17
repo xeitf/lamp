@@ -13,14 +13,14 @@ import (
 func TestXxx(t *testing.T) {
 	os.Setenv("PUBLIC_HOSTNAME", "127.0.0.1")
 
-	close, err := lamp.Init("etcd://127.0.0.1:2379/services")
+	client, err := lamp.NewClient("etcd://127.0.0.1:2379/services")
 	if err != nil {
 		t.Errorf("lamp.Init: %s", err.Error())
 		return
 	}
-	defer close()
+	defer client.Close()
 
-	cancel, err := lamp.Expose("user-svr",
+	cancel, err := client.Expose("user-svr",
 		lamp.WithTTL(5),
 		lamp.WithPublic(":8999"),
 		lamp.WithPublic(":80", "http"),
@@ -31,7 +31,7 @@ func TestXxx(t *testing.T) {
 	}
 	defer cancel()
 
-	cancel2, err := lamp.Expose("user-svr",
+	cancel2, err := client.Expose("user-svr",
 		lamp.WithPublic(":8990"),
 	)
 	if err != nil {
@@ -40,7 +40,7 @@ func TestXxx(t *testing.T) {
 	}
 	defer cancel2()
 
-	closeWatch, err := lamp.Watch("user-svr", "grpc", func(addrs []string, closed bool) {
+	closeWatch, err := client.Watch("user-svr", "grpc", func(addrs []string, closed bool) {
 		fmt.Printf("Watch: %+v %+v\n", addrs, closed)
 	})
 	if err != nil {
@@ -55,7 +55,7 @@ func TestXxx(t *testing.T) {
 		wg.Done()
 
 		for range time.Tick(time.Second * 2) {
-			addrs, err := lamp.Discover("user-svr", "tcp")
+			addrs, err := client.Discover("user-svr", "tcp")
 			if err != nil {
 				fmt.Printf("Discover: %s\n", err.Error())
 			} else {

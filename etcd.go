@@ -173,7 +173,7 @@ func (c *etcdClient) Discover(ctx context.Context, serviceName string, protocol 
 }
 
 // Watch
-func (c *etcdClient) Watch(ctx context.Context, serviceName string, protocol string, notify func(addrs []string, closed bool)) (close func(), err error) {
+func (c *etcdClient) Watch(ctx context.Context, serviceName string, protocol string, update func(addrs []string, closed bool)) (close func(), err error) {
 	var wg sync.WaitGroup
 	var serviceAddrs = make(map[string]map[string]Node)
 	var servicePrefix = c.servicePrefix(serviceName)
@@ -201,7 +201,7 @@ func (c *etcdClient) Watch(ctx context.Context, serviceName string, protocol str
 	wg.Add(1)
 	go func() {
 		wg.Done()
-		c.watch(ctx, servicePrefix, protocol, notify, serviceAddrs, watchChan)
+		c.watch(ctx, servicePrefix, protocol, update, serviceAddrs, watchChan)
 	}()
 
 	wg.Wait()
@@ -210,12 +210,12 @@ func (c *etcdClient) Watch(ctx context.Context, serviceName string, protocol str
 }
 
 // watch
-func (c *etcdClient) watch(ctx context.Context, servicePrefix, protocol string, notify func(addrs []string, closed bool),
+func (c *etcdClient) watch(ctx context.Context, servicePrefix, protocol string, update func(addrs []string, closed bool),
 	serviceAddrs map[string]map[string]Node, watchChan client.WatchChan) {
-	defer notify(nil, true)
+	defer update(nil, true)
 
 	// send the first notification
-	notify(c.selectAddrs(serviceAddrs, protocol), false)
+	update(c.selectAddrs(serviceAddrs, protocol), false)
 
 	put := func(key string, value []byte) {
 		p, id, node, err := c.isValidNode(servicePrefix, key, value)
@@ -242,27 +242,17 @@ func (c *etcdClient) watch(ctx context.Context, servicePrefix, protocol string, 
 		}
 	}
 
-	for {
-		select {
-		// Watch channel
-		case watchResp, ok := <-watchChan:
-			if !ok {
-				return
+	for watchResp := range watchChan {
+		for _, event := range watchResp.Events {
+			switch event.Type {
+			case client.EventTypePut:
+				put(string(event.Kv.Key), event.Kv.Value)
+			case client.EventTypeDelete:
+				rem(string(event.Kv.Key), event.Kv.Value)
 			}
-			for _, event := range watchResp.Events {
-				switch event.Type {
-				case client.EventTypePut:
-					put(string(event.Kv.Key), event.Kv.Value)
-				case client.EventTypeDelete:
-					rem(string(event.Kv.Key), event.Kv.Value)
-				}
-			}
-			// notify
-			notify(c.selectAddrs(serviceAddrs, protocol), false)
-		// Cancel
-		case <-ctx.Done():
-			return
 		}
+		// notify
+		update(c.selectAddrs(serviceAddrs, protocol), false)
 	}
 }
 
