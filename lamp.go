@@ -9,7 +9,6 @@ import (
 )
 
 var (
-	ErrNotInitialized         = errors.New("not initialized")
 	ErrMiddlewareNotSupported = errors.New("middleware not supported")
 	ErrAddressNotFound        = errors.New("address not found")
 )
@@ -17,7 +16,7 @@ var (
 type Middleware interface {
 	Expose(ctx context.Context, serviceName string, addrs map[string]string, ttl int64) (cancel func() error, err error)
 	Discover(ctx context.Context, serviceName string, protocol string) (addrs []string, err error)
-	Watch(ctx context.Context, serviceName string, protocol string, notify func(addrs []string, closed bool)) (close func(), err error)
+	Watch(ctx context.Context, serviceName string, protocol string, update func(addrs []string, closed bool)) (close func(), err error)
 	Close() error
 }
 
@@ -26,9 +25,9 @@ type Client struct {
 	close      func() error
 }
 
-// NewCLient
+// NewClient
 // e. etcd://127.0.0.1:2379/services?
-func NewClient(cfg string) (cli *Client, err error) {
+func NewClient(cfg string) (c *Client, err error) {
 	var URL *url.URL
 	var middleware Middleware
 
@@ -52,8 +51,8 @@ func NewClient(cfg string) (cli *Client, err error) {
 		return
 	}
 
-	cli = &Client{middleware: middleware}
-	cli.close = func() (err error) {
+	c = &Client{middleware: middleware}
+	c.close = func() (err error) {
 		cancelCtx()
 		return middleware.Close()
 	}
@@ -110,12 +109,12 @@ func WithPublic(addr string, protocol ...string) ExposeOption {
 }
 
 // Expose
-func (cli *Client) Expose(serviceName string, opts ...ExposeOption) (cancel func() error, err error) {
-	return cli.ExposeWithContext(context.Background(), serviceName, opts...)
+func (c *Client) Expose(serviceName string, opts ...ExposeOption) (cancel func() error, err error) {
+	return c.ExposeWithContext(context.Background(), serviceName, opts...)
 }
 
 // ExposeWithContext
-func (cli *Client) ExposeWithContext(ctx context.Context, serviceName string, opts ...ExposeOption) (cancel func() error, err error) {
+func (c *Client) ExposeWithContext(ctx context.Context, serviceName string, opts ...ExposeOption) (cancel func() error, err error) {
 	expOpts := exposeOptions{
 		Addrs: make(map[string]string),
 	}
@@ -134,30 +133,30 @@ func (cli *Client) ExposeWithContext(ctx context.Context, serviceName string, op
 		return nil, ErrAddressNotFound
 	}
 
-	return cli.middleware.Expose(ctx, serviceName, expOpts.Addrs, expOpts.TTL)
+	return c.middleware.Expose(ctx, serviceName, expOpts.Addrs, expOpts.TTL)
 }
 
 // Discover
-func (cli *Client) Discover(serviceName string, protocol string) (addrs []string, err error) {
-	return cli.DiscoverWithContext(context.Background(), serviceName, protocol)
+func (c *Client) Discover(serviceName string, protocol string) (addrs []string, err error) {
+	return c.DiscoverWithContext(context.Background(), serviceName, protocol)
 }
 
 // DiscoverWithContext
-func (cli *Client) DiscoverWithContext(ctx context.Context, serviceName string, protocol string) (addrs []string, err error) {
-	return cli.middleware.Discover(ctx, serviceName, protocol)
+func (c *Client) DiscoverWithContext(ctx context.Context, serviceName string, protocol string) (addrs []string, err error) {
+	return c.middleware.Discover(ctx, serviceName, protocol)
 }
 
 // Watch
-func (cli *Client) Watch(serviceName string, protocol string, notify func(addrs []string, closed bool)) (close func(), err error) {
-	return cli.WatchWithContext(context.Background(), serviceName, protocol, notify)
+func (c *Client) Watch(serviceName string, protocol string, update func(addrs []string, closed bool)) (close func(), err error) {
+	return c.WatchWithContext(context.Background(), serviceName, protocol, update)
 }
 
 // WatchWithContext
-func (cli *Client) WatchWithContext(ctx context.Context, serviceName string, protocol string, notify func(addrs []string, closed bool)) (close func(), err error) {
-	return cli.middleware.Watch(ctx, serviceName, protocol, notify)
+func (c *Client) WatchWithContext(ctx context.Context, serviceName string, protocol string, update func(addrs []string, closed bool)) (close func(), err error) {
+	return c.middleware.Watch(ctx, serviceName, protocol, update)
 }
 
 // Close
-func (cli *Client) Close() (err error) {
-	return cli.close()
+func (c *Client) Close() (err error) {
+	return c.close()
 }

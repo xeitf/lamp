@@ -201,7 +201,7 @@ func (c *etcdClient) Watch(ctx context.Context, serviceName string, protocol str
 	wg.Add(1)
 	go func() {
 		wg.Done()
-		c.watch(ctx, servicePrefix, protocol, update, serviceAddrs, watchChan)
+		c.watch(servicePrefix, protocol, update, serviceAddrs, watchChan)
 	}()
 
 	wg.Wait()
@@ -210,7 +210,7 @@ func (c *etcdClient) Watch(ctx context.Context, serviceName string, protocol str
 }
 
 // watch
-func (c *etcdClient) watch(ctx context.Context, servicePrefix, protocol string, update func(addrs []string, closed bool),
+func (c *etcdClient) watch(servicePrefix, protocol string, update func(addrs []string, closed bool),
 	serviceAddrs map[string]map[string]Node, watchChan client.WatchChan) {
 	defer update(nil, true)
 
