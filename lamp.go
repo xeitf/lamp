@@ -14,7 +14,7 @@ var (
 )
 
 type Middleware interface {
-	Expose(ctx context.Context, serviceName string, addrs map[string]string, ttl int64) (cancel func() error, err error)
+	Expose(ctx context.Context, serviceName string, addrs map[string]Address, ttl int64) (cancel func() error, err error)
 	Discover(ctx context.Context, serviceName string, protocol string) (addrs []string, err error)
 	Watch(ctx context.Context, serviceName string, protocol string, update func(addrs []string, closed bool)) (close func(), err error)
 	Close() error
@@ -61,7 +61,7 @@ func NewClient(cfg string) (c *Client, err error) {
 }
 
 type exposeOptions struct {
-	Addrs map[string]string
+	Addrs map[string]Address
 	TTL   int64
 }
 
@@ -89,7 +89,12 @@ func WithTTL(ttl int64) ExposeOption {
 }
 
 // WithPublic
-func WithPublic(addr string, protocol ...string) ExposeOption {
+func WithPublic(addr string) ExposeOption {
+	return WithPublicOptions(addr, "any", 100, false)
+}
+
+// WithPublicOptions
+func WithPublicOptions(addr string, protocol string, weight int, readyOnly bool) ExposeOption {
 	return newFnExposeOption(func(opts *exposeOptions) {
 		host, port, err := net.SplitHostPort(addr)
 		if err != nil {
@@ -98,13 +103,14 @@ func WithPublic(addr string, protocol ...string) ExposeOption {
 		if host == "" {
 			host = os.Getenv("PUBLIC_HOSTNAME")
 		}
-		if host == "" || port == "" {
+		if host == "" || port == "" || protocol == "" || weight <= 0 {
 			return
 		}
-		if len(protocol) != 1 {
-			protocol = []string{"any"}
+		ro := 0
+		if readyOnly {
+			ro = 1
 		}
-		opts.Addrs[protocol[0]] = host + ":" + port
+		opts.Addrs[protocol] = Address{Addr: host + ":" + port, Weight: weight, ReadOnly: ro}
 	})
 }
 
@@ -116,7 +122,7 @@ func (c *Client) Expose(serviceName string, opts ...ExposeOption) (cancel func()
 // ExposeWithContext
 func (c *Client) ExposeWithContext(ctx context.Context, serviceName string, opts ...ExposeOption) (cancel func() error, err error) {
 	expOpts := exposeOptions{
-		Addrs: make(map[string]string),
+		Addrs: make(map[string]Address),
 	}
 	// Apply options
 	for _, opt := range opts {

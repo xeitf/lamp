@@ -66,7 +66,7 @@ func newEtcdWithURL(ctx context.Context, URL *url.URL) (c *etcdClient, err error
 }
 
 // Expose
-func (c *etcdClient) Expose(ctx context.Context, serviceName string, addrs map[string]string, ttl int64) (cancel func() error, err error) {
+func (c *etcdClient) Expose(ctx context.Context, serviceName string, addrs map[string]Address, ttl int64) (cancel func() error, err error) {
 	if len(addrs) <= 0 {
 		return nil, ErrInvalidAddress
 	}
@@ -116,8 +116,10 @@ func (c *etcdClient) Expose(ctx context.Context, serviceName string, addrs map[s
 
 	for protocol, addr := range addrs {
 		node := Node{
-			Addr: addr,
-			Time: now.Unix(),
+			Addr:     addr.Addr,
+			Weight:   addr.Weight,
+			ReadOnly: addr.ReadOnly,
+			Time:     now.Unix(),
 		}
 		info, err := json.Marshal(node)
 		if err != nil {
@@ -126,7 +128,7 @@ func (c *etcdClient) Expose(ctx context.Context, serviceName string, addrs map[s
 		}
 		ops = append(ops,
 			client.OpPut(
-				servicePrefix+"/"+protocol+"/"+generateNodeID(addr),
+				servicePrefix+"/"+protocol+"/"+generateNodeID(addr.Addr),
 				string(info),
 				client.WithLease(leaseResp.ID),
 			))

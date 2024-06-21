@@ -5,9 +5,17 @@ import (
 	"encoding/hex"
 )
 
+type Address struct {
+	Addr     string `json:"addr,omitempty"`
+	Weight   int    `json:"weight,omitempty"`
+	ReadOnly int    `json:"readonly,omitempty"`
+}
+
 type Node struct {
-	Addr string `json:"addr,omitempty"`
-	Time int64  `json:"time,omitempty"`
+	Addr     string `json:"addr,omitempty"`
+	Weight   int    `json:"weight,omitempty"`
+	ReadOnly int    `json:"readonly,omitempty"`
+	Time     int64  `json:"time,omitempty"`
 }
 
 // generateNodeID
