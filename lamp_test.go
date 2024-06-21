@@ -40,7 +40,7 @@ func TestXxx(t *testing.T) {
 	}
 	defer cancel2()
 
-	closeWatch, err := lc.Watch("user-svr", "grpc", func(addrs []string, closed bool) {
+	closeWatch, err := lc.Watch("user-svr", "grpc", func(addrs []lamp.Address, closed bool) {
 		fmt.Printf("Watch: %+v %+v\n", addrs, closed)
 	})
 	if err != nil {

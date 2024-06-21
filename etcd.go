@@ -149,7 +149,7 @@ func (c *etcdClient) Expose(ctx context.Context, serviceName string, addrs map[s
 }
 
 // Discover
-func (c *etcdClient) Discover(ctx context.Context, serviceName string, protocol string) (addrs []string, err error) {
+func (c *etcdClient) Discover(ctx context.Context, serviceName string, protocol string) (addrs []Address, err error) {
 	servicePrefix := c.servicePrefix(serviceName)
 
 	getResp, err := c.cli.Get(ctx, servicePrefix, client.WithPrefix())
@@ -175,7 +175,7 @@ func (c *etcdClient) Discover(ctx context.Context, serviceName string, protocol 
 }
 
 // Watch
-func (c *etcdClient) Watch(ctx context.Context, serviceName string, protocol string, update func(addrs []string, closed bool)) (close func(), err error) {
+func (c *etcdClient) Watch(ctx context.Context, serviceName string, protocol string, update func(addrs []Address, closed bool)) (close func(), err error) {
 	var wg sync.WaitGroup
 	var serviceAddrs = make(map[string]map[string]Node)
 	var servicePrefix = c.servicePrefix(serviceName)
@@ -212,7 +212,7 @@ func (c *etcdClient) Watch(ctx context.Context, serviceName string, protocol str
 }
 
 // watch
-func (c *etcdClient) watch(servicePrefix, protocol string, update func(addrs []string, closed bool),
+func (c *etcdClient) watch(servicePrefix, protocol string, update func(addrs []Address, closed bool),
 	serviceAddrs map[string]map[string]Node, watchChan client.WatchChan) {
 	defer update(nil, true)
 
@@ -280,13 +280,13 @@ func (c *etcdClient) splitProtocolAndNodeID(key, servicePrefix string) (protocol
 	}
 }
 
-func (c *etcdClient) selectAddrs(serviceAddrs map[string]map[string]Node, protocol string) (addrs []string) {
+func (c *etcdClient) selectAddrs(serviceAddrs map[string]map[string]Node, protocol string) (addrs []Address) {
 	if _, ok := serviceAddrs[protocol]; !ok {
 		protocol = "any"
 	}
 	if protocolAddrs, ok := serviceAddrs[protocol]; ok {
 		for _, addr := range protocolAddrs {
-			addrs = append(addrs, addr.Addr)
+			addrs = append(addrs, Address{Addr: addr.Addr, Weight: addr.Weight, ReadOnly: addr.ReadOnly})
 		}
 	}
 	return

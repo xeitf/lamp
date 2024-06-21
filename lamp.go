@@ -15,8 +15,8 @@ var (
 
 type Middleware interface {
 	Expose(ctx context.Context, serviceName string, addrs map[string]Address, ttl int64) (cancel func() error, err error)
-	Discover(ctx context.Context, serviceName string, protocol string) (addrs []string, err error)
-	Watch(ctx context.Context, serviceName string, protocol string, update func(addrs []string, closed bool)) (close func(), err error)
+	Discover(ctx context.Context, serviceName string, protocol string) (addrs []Address, err error)
+	Watch(ctx context.Context, serviceName string, protocol string, update func(addrs []Address, closed bool)) (close func(), err error)
 	Close() error
 }
 
@@ -143,22 +143,22 @@ func (c *Client) ExposeWithContext(ctx context.Context, serviceName string, opts
 }
 
 // Discover
-func (c *Client) Discover(serviceName string, protocol string) (addrs []string, err error) {
+func (c *Client) Discover(serviceName string, protocol string) (addrs []Address, err error) {
 	return c.DiscoverWithContext(context.Background(), serviceName, protocol)
 }
 
 // DiscoverWithContext
-func (c *Client) DiscoverWithContext(ctx context.Context, serviceName string, protocol string) (addrs []string, err error) {
+func (c *Client) DiscoverWithContext(ctx context.Context, serviceName string, protocol string) (addrs []Address, err error) {
 	return c.middleware.Discover(ctx, serviceName, protocol)
 }
 
 // Watch
-func (c *Client) Watch(serviceName string, protocol string, update func(addrs []string, closed bool)) (close func(), err error) {
+func (c *Client) Watch(serviceName string, protocol string, update func(addrs []Address, closed bool)) (close func(), err error) {
 	return c.WatchWithContext(context.Background(), serviceName, protocol, update)
 }
 
 // WatchWithContext
-func (c *Client) WatchWithContext(ctx context.Context, serviceName string, protocol string, update func(addrs []string, closed bool)) (close func(), err error) {
+func (c *Client) WatchWithContext(ctx context.Context, serviceName string, protocol string, update func(addrs []Address, closed bool)) (close func(), err error) {
 	return c.middleware.Watch(ctx, serviceName, protocol, update)
 }
 
