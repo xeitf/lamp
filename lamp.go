@@ -101,7 +101,7 @@ func WithPublicOptions(addr string, protocol string, weight int, readyOnly bool)
 			return
 		}
 		if host == "" {
-			host = os.Getenv("PUBLIC_HOSTNAME")
+			host = os.Getenv("LAMP_NODE_HOSTNAME")
 		}
 		if host == "" || port == "" || protocol == "" || weight <= 0 {
 			return
