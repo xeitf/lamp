@@ -6,11 +6,17 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strconv"
 )
 
 var (
 	ErrMiddlewareNotSupported = errors.New("middleware not supported")
 	ErrAddressNotFound        = errors.New("address not found")
+)
+
+const (
+	NodeProtocolAny   = "any"
+	NodeWeightDefault = 100
 )
 
 type Middleware interface {
@@ -90,27 +96,32 @@ func WithTTL(ttl int64) ExposeOption {
 
 // WithPublic
 func WithPublic(addr string) ExposeOption {
-	return WithPublicOptions(addr, "any", 100, false)
+	return WithPublicOptions(0, addr, NodeProtocolAny, NodeWeightDefault, false)
 }
 
 // WithPublicOptions
-func WithPublicOptions(addr string, protocol string, weight int, readyOnly bool) ExposeOption {
+func WithPublicOptions(sharding int, addr string, protocol string, weight int, readyOnly bool) ExposeOption {
 	return newFnExposeOption(func(opts *exposeOptions) {
 		host, port, err := net.SplitHostPort(addr)
 		if err != nil {
 			return
 		}
+		if sharding <= 0 {
+			if value := os.Getenv("LAMP_NODE_SHARDING"); value != "" {
+				sharding, _ = strconv.Atoi(value)
+			}
+		}
 		if host == "" {
 			host = os.Getenv("LAMP_NODE_HOSTNAME")
 		}
-		if host == "" || port == "" || protocol == "" || weight <= 0 {
+		if host == "" || port == "" || protocol == "" || weight <= 0 || sharding < 0 {
 			return
 		}
 		ro := 0
 		if readyOnly {
 			ro = 1
 		}
-		opts.Addrs[protocol] = Address{Addr: host + ":" + port, Weight: weight, ReadOnly: ro}
+		opts.Addrs[protocol] = Address{Sharding: sharding, Addr: host + ":" + port, Weight: weight, ReadOnly: ro}
 	})
 }
 

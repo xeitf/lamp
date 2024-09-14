@@ -282,7 +282,7 @@ func (c *etcdClient) splitProtocolAndNodeID(key, servicePrefix string) (protocol
 
 func (c *etcdClient) selectAddrs(serviceAddrs map[string]map[string]Node, protocol string) (addrs []Address) {
 	if _, ok := serviceAddrs[protocol]; !ok {
-		protocol = "any"
+		protocol = NodeProtocolAny
 	}
 	if protocolAddrs, ok := serviceAddrs[protocol]; ok {
 		for _, addr := range protocolAddrs {

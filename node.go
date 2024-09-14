@@ -6,6 +6,7 @@ import (
 )
 
 type Address struct {
+	Sharding int    `json:"sharding,omitempty"`
 	Addr     string `json:"addr,omitempty"`
 	Weight   int    `json:"weight,omitempty"`
 	ReadOnly int    `json:"readonly,omitempty"`

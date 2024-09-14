@@ -23,7 +23,7 @@ func TestXxx(t *testing.T) {
 	cancel, err := lc.Expose("user-svr",
 		lamp.WithTTL(5),
 		lamp.WithPublic(":8999"),
-		lamp.WithPublicOptions(":80", "http", 100, true),
+		lamp.WithPublicOptions(0, ":80", "http", 100, true),
 	)
 	if err != nil {
 		t.Errorf("lamp.Expose: %s", err.Error())
